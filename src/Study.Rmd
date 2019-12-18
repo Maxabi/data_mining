@@ -1,0 +1,262 @@
+---
+title: ""
+output:
+  pdf_document:
+    fig_caption: yes
+    keep_tex: no
+    number_sections: yes
+    toc: no
+geometry: "left=3cm,right=3cm,top=2cm,bottom=2cm"
+header-includes:
+- \usepackage{geometry}
+- \usepackage{fancyhdr}
+---
+
+\renewcommand{\contentsname}{Table des matières}
+
+\pagestyle{fancy}
+\renewcommand\headrulewidth{1pt}
+\fancyhead[R]{\leftmark}
+\fancyhead[L]{DM - ABITBOL Maxime}
+\fancyfoot[C]{\textbf{\thepage}}
+
+
+\includegraphics{Images/logo.png}     
+\vspace{1.3cm}   
+
+\thispagestyle{empty}
+\vspace*{\fill}
+\begin{center}
+\rule{16cm}{0.02cm}  
+\vspace{.05cm}    
+
+\textbf{\Huge{Recueil de données}} \\   
+
+\begin{huge}
+Devoir Maison \\ 
+\vspace{0.5cm}    
+Maxime ABITBOL
+\end{huge}
+
+\rule{16cm}{0.02cm}
+\end{center}
+  
+\vspace*{8cm}
+\vspace*{\fill}
+
+
+\newpage
+\tableofcontents
+\newpage
+
+# Exercice 1 - 
+
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+# Imports
+library(sf)
+library(leaflet)
+library(cartography)
+library(tidyverse)
+library(tidyr)
+library(cartography)
+library(rjson)
+```
+
+## Charger les contours des départements français contenus dans le répertoire `exo6_dep`.
+```{r, message=FALSE, warning=FALSE, results=FALSE, output=FALSE}
+dep <- st_read("data/exo6_dep/dep.shp")
+```
+
+
+```{r, echo=F, fig.cap="Contour de la France et de ses DOM-TOM", message=FALSE, warning=FALSE}
+dep_u <- st_union(dep)
+plot(st_geometry(dep), col="lightblue")
+plot(st_geometry(dep), add=T, lwd=2, border = "red")
+```
+
+
+## Calculer à partir des données communales contenues dans le fichier `exo6_data.csv` des taux de naissances par départements.
+```{r}
+data_com <- read.csv("data/exo6_data.csv", encoding="UTF-8")
+data_com <- subset(data_com, data_com$code_reg != 'NA')
+naissance_france_2011 <- sum(data_com$nombre_naissances_2011)
+
+#aggregate(data_com$nombre_naissances_2011, 
+#     by=list(Category=data_com$code_dept), FUN=sum)
+
+taux_naissances <- data_com %>% 
+  group_by(code_dept) %>% 
+  summarise(nombre_naissance = sum(nombre_naissances_2011), 
+            population_2011=sum(Population_2011)) %>%      
+            mutate(taux_naissance = nombre_naissance/population_2011*100)
+
+head(taux_naissances)
+```
+
+## Joindre les deux tables et vérifier ques des données sont associés à chaque départements.
+```{r}
+dep2 <- data.frame(dep$code_insee, dep$nom)
+
+data_com2 <- data_com %>% 
+  left_join(taux_naissances) 
+
+# data_com2 <- merge(data_com,taux_naissances)
+head(taux_naissances)
+head(subset(data_com2, data_com2$code_dept==1))[,1:4]
+head(subset(data_com2, data_com2$code_dept==13))[,1:4]
+```
+
+```{r, message=FALSE, warning=FALSE, results=FALSE, output=FALSE}
+data_taux_naissance = taux_naissances %>% 
+  mutate(code_dept=as.character(code_dept)) %>%    
+  mutate(code_dept = ifelse(str_length(code_dept)==1,
+                            paste0("0",code_dept),code_dept))
+```
+
+
+## Exporter les données en geojson.
+```{r, message=FALSE, warning=FALSE, results=FALSE, output=FALSE, eval=FALSE}
+
+data_json <- toJSON(unname(split(data_com2, 1:nrow(data_com2))))
+cat(data_json)
+write(data_json, "data/data_exo6.GeoJSON")
+```
+
+
+## Réaliser une carte coroplèthe avec ces données.
+```{r, warning=FALSE}
+carte = dep %>% 
+  left_join(data_taux_naissance,by=c("code_insee"="code_dept"))
+```
+
+```{r, warning=FALSE}
+# ?choroLayer
+choroLayer(carte,var="taux_naissance", colNA = "white")
+```
+On remarque ici que, plus la couleur est claire, plus le taux de naissance est faible.   
+On remarque que certaines données sont manquantes, on peut donc refaire la carte en filtrant ces données manquantes.
+```{r, warning=FALSE}
+carte2 = dep %>% 
+  left_join(data_taux_naissance,by=c("code_insee"="code_dept")) %>% 
+  filter(!is.na(taux_naissance))
+
+choroLayer(carte2, var="taux_naissance", border="grey20", 
+           lwd=1, legend.pos = "bottomleft", 
+  legend.title.cex = 0.8, 
+  legend.title.txt = "Taux de naissance \n en %", 
+  legend.values.cex = 0.6,
+  legend.values.rnd = 0, legend.nodata = "no data",
+  legend.frame = FALSE, legend.border = "black",
+  legend.horiz = FALSE, add = FALSE,
+  col = carto.pal(pal1 = "pastel.pal", n1 = 8))
+north(pos = "topright")
+
+layoutLayer(title = "Taux de naissance en france par commune en %")
+```
+
+On peut constater que l'affichage en pourcentage n'est pas optimal, on peut pour cela modifier et mettre en pourmille. 
+
+```{r, warning=FALSE}
+taux_naissances_1000 <- data_com %>% 
+  group_by(code_dept) %>% 
+  summarise(nombre_naissance = sum(nombre_naissances_2011), 
+            population_2011=sum(Population_2011)) %>%      
+            mutate(taux_naissance = nombre_naissance/population_2011*1000)
+
+data_taux_naissance_1000 = taux_naissances_1000 %>% 
+  mutate(code_dept=as.character(code_dept)) %>%    
+  mutate(code_dept = ifelse(str_length(code_dept)==1,
+                            paste0("0",code_dept),code_dept))
+
+carte3 = dep %>% 
+  left_join(data_taux_naissance_1000,by=c("code_insee"="code_dept")) %>% 
+  filter(!is.na(taux_naissance))
+
+choroLayer(carte3, var="taux_naissance", border="grey20", 
+           lwd=1, legend.pos = "bottomleft", 
+  legend.title.cex = 0.8, 
+  legend.title.txt = "Taux de naissance \n en ‰", 
+  legend.values.cex = 0.6,
+  legend.values.rnd = 0, legend.nodata = "no data",
+  legend.frame = FALSE, legend.border = "black",
+  legend.horiz = FALSE, add = FALSE,
+  col = carto.pal(pal1 = "pastel.pal", n1 = 8))
+north(pos = "topright")
+
+layoutLayer(title = "Taux de naissance en france par commune en ‰")
+```
+
+
+\newpage 
+
+# Exercice 2 - 
+
+## Calculer et afficher les voronois associés aux stations velib de new-york.
+
+```{r}
+datajson <- fromJSON(file = "data/input_NewYork.json")
+id <- lapply(datajson$stationBeanList, function(st){as.data.frame(st)})
+voronois = do.call(rbind,id)
+head(voronois)[1:length(voronois)]
+```
+
+## Utiliser pour cela la fonction st_as_sf avec l'option coords.
+```{r}
+# ?st_as_sf
+voronois = st_as_sf(voronois %>% 
+                      filter(longitude!=0,latitude!=0),coords = c("longitude","latitude"))
+
+plot(voronois)
+```
+
+\newpage 
+
+# Exercice 3 - 
+## Faire une carte interactive des monuments historiques à paris
+```{r, warning=FALSE, output=FALSE, eval=FALSE}
+monument = read_sf("data/monuments_paris.geojson")
+contours = read_sf("data/iris75.geojson")
+monuments_historique = read.csv("data/monuments-historiques.csv", sep=";", encoding = "UTF-8")
+
+monuments = monument %>% 
+  left_join(monuments_historique,by=c("id"="Référence"))
+
+
+leaflet(monuments) %>% 
+  addTiles() %>% 
+  addCircleMarkers(popup = ~ Appellation.courante,
+                   stroke=FALSE,
+                   fillOpacity = 0.35, 
+                   radius = 3,
+                   color = "darkred")
+```
+
+## Faire une carte en symbol proportionel avec le nombre de monuments par iris
+```{r, warning=FALSE, output=FALSE, eval=FALSE}
+plot(st_geometry(contours), col = "ivory", border="ivory3",  bg="azure")
+propSymbolsLayer(monuments, var= "Appellation.courante")
+```
+
+
+\newpage
+
+# Exercice 4 - 
+## Faire une carte en symboles proportionels du nombre de vélos dans les stations vélib à NewYork.
+```{r, warning=FALSE, output=FALSE, eval=FALSE}
+leaflet(data=voronois) %>% 
+  addTiles() %>% 
+  addCircleMarkers(radius = ~ sqrt(availableBikes),
+                   fillColor = "#449944", stroke=FALSE,
+                   fillOpacity = 1)
+```
+
+## Utiliser un fond de carte open street map avec la library cartography
+```{r}
+plot(st_geometry(voronois))
+propSymbolsLayer(voronois, var = "availableBikes", legend.pos = "topleft")
+north(pos = "topright", col = "darkblue")
+layoutLayer(title = "Répartition des Velibs à New-York", 
+            col = "darkblue", coltitle = "white", tabtitle = TRUE,
+            frame = TRUE, scale = NULL, north = FALSE)
+```
+
